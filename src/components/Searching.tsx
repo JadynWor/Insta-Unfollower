@@ -36,7 +36,9 @@ export const Searching = ({
   }
   const isBusy = Boolean(state.isScanningActive || state.isCheckingFollowCounts);
   const whitelistedIds = new Set(state.whitelistedResults.map(user => user.id));
-  const usersMissingCounts = state.results.filter(user => !user.follows_viewer && !whitelistedIds.has(user.id) && !hasFollowCounts(user)).length;
+  const usersMissingCounts = state.results.filter(
+    user => (state.filter.showMutuals || !user.follows_viewer) && !whitelistedIds.has(user.id) && !hasFollowCounts(user),
+  ).length;
 
   const usersForDisplay = getUsersForDisplay(
     state.results,
@@ -133,6 +135,15 @@ export const Searching = ({
                 onChange={handleScanFilter}
               />
               &nbsp;{t(lang, "followingMoreThanFollowers")}
+            </label>
+            <label className="badge m-small">
+              <input
+                type="checkbox"
+                name="showMutuals"
+                checked={state.filter.showMutuals}
+                onChange={handleScanFilter}
+              />
+              &nbsp;{t(lang, "mutuals")}
             </label>
           </menu>
 
@@ -425,9 +436,10 @@ export const Searching = ({
                     )}
                   </div>
                   {user.is_verified && <div className="verified-badge">✔</div>}
-                  {(user.is_private || isRatioFlagged) && (
+                  {(user.is_private || isRatioFlagged || user.follows_viewer) && (
                     <div className="flex justify-center w-100 gap-small">
                       {isRatioFlagged && <span className="ratio-indicator">{t(lang, "followingMoreThanFollowers")}</span>}
+                      {user.follows_viewer && <span className="mutual-indicator">{t(lang, "followsYou")}</span>}
                       {user.is_private && <span className="private-indicator">{t(lang, "private")}</span>}
                     </div>
                   )}

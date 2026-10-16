@@ -115,9 +115,9 @@ export function getUsersForDisplay(
     if (!filter.showVerified && result.is_verified) {
       continue;
     }
-    // Scans only keep accounts that don't follow back; this also hides
-    // mutuals stored by older cached scans.
-    if (result.follows_viewer) {
+    // Scans keep mutuals so their follow counts can be checked, but they're
+    // hidden unless asked for so "Select All" only picks non-followers.
+    if (result.follows_viewer && !filter.showMutuals) {
       continue;
     }
     if (!filter.showWithOutProfilePicture && isWithoutProfilePicture(result)) {

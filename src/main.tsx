@@ -99,7 +99,7 @@ const _getPreviewUsers = (): readonly UserNode[] => [
   _createPreviewUser("4", "dawnledger", "Jon Bell", { isPrivate: true, followerCount: 1210, followingCount: 980 }),
   _createPreviewUser("5", "elias.market", "Elias Noor", { isVerified: true, followerCount: 51200, followingCount: 230 }),
   _createPreviewUser("6", "fieldnotes.studio", "Nadia Reyes", { followerCount: 112, followingCount: 4380 }),
-  _createPreviewUser("7", "glint.supply", "Remy Park", { followsViewer: true }),
+  _createPreviewUser("7", "glint.supply", "Remy Park", { followsViewer: true, followerCount: 87, followingCount: 7420 }),
   _createPreviewUser("8", "harbor.sequence", "Ivy Chen", { isPrivate: true }),
   _createPreviewUser("9", "inkline.daily", "Sofia Grant", { followerCount: 640, followingCount: 702 }),
   _createPreviewUser("10", "juniper.signal", "Cal Reed", { isVerified: true }),
@@ -127,6 +127,7 @@ function App() {
             showPrivate: true,
             showWithOutProfilePicture: true,
             onlyFollowingMoreThanFollowers: false,
+            showMutuals: false,
           },
         } as State
         : { status: "initial" as const }
@@ -211,6 +212,7 @@ function App() {
         showPrivate: true,
         showWithOutProfilePicture: true,
         onlyFollowingMoreThanFollowers: false,
+        showMutuals: false,
       },
     });
     setToast({
@@ -240,6 +242,7 @@ function App() {
           showPrivate: true,
           showWithOutProfilePicture: true,
           onlyFollowingMoreThanFollowers: false,
+          showMutuals: false,
         },
       });
       return;
@@ -260,6 +263,7 @@ function App() {
         showPrivate: true,
         showWithOutProfilePicture: true,
         onlyFollowingMoreThanFollowers: false,
+        showMutuals: false,
       },
     });
   };
@@ -271,7 +275,9 @@ function App() {
       return;
     }
     const whitelistedIds = new Set(state.whitelistedResults.map(user => user.id));
-    const usersToCheck = state.results.filter(user => !user.follows_viewer && !whitelistedIds.has(user.id) && !hasFollowCounts(user));
+    const usersToCheck = state.results.filter(
+      user => (state.filter.showMutuals || !user.follows_viewer) && !whitelistedIds.has(user.id) && !hasFollowCounts(user),
+    );
     if (usersToCheck.length === 0) {
       return;
     }
@@ -710,19 +716,23 @@ function App() {
       );
 
       // Phase 2: Walk the viewer's following list and check each against the follower index.
-      // Accounts not in the index genuinely do not follow back and are progressively streamed to UI.
-      const nonFollowers: UserNode[] = [];
+      // Accounts not in the index genuinely do not follow back. Mutuals are kept too (flagged via
+      // follows_viewer) so the follow-count check can spot bots that follow back; the default
+      // filter still hides them. Accounts are progressively streamed to UI.
+      const followedAccounts: UserNode[] = [];
+      let nonFollowersCount = 0;
       let checkedCount = 0;
 
       const checkFollowingPage = async (pageUsers: readonly RawFriendshipUser[]): Promise<boolean> => {
-        const newNonFollowersBatch: UserNode[] = [];
+        const newAccountsBatch: UserNode[] = [];
 
         for (const user of pageUsers) {
           const followsViewer = isUserInFollowerIndex(followerIndex, user);
+          const node = rawFriendshipUserToUserNode(user, followsViewer);
+          followedAccounts.push(node);
+          newAccountsBatch.push(node);
           if (!followsViewer) {
-            const node = rawFriendshipUserToUserNode(user, false);
-            nonFollowers.push(node);
-            newNonFollowersBatch.push(node);
+            nonFollowersCount++;
           }
           checkedCount++;
         }
@@ -733,7 +743,7 @@ function App() {
           prevState.status === "scanning"
             ? {
                 ...prevState,
-                results: newNonFollowersBatch.length > 0 ? [...prevState.results, ...newNonFollowersBatch] : prevState.results,
+                results: newAccountsBatch.length > 0 ? [...prevState.results, ...newAccountsBatch] : prevState.results,
                 totalScanned: checkedCount,
                 percentage: followingProgress,
               }
@@ -767,9 +777,9 @@ function App() {
 
       const scanIsComplete = followingCompleted;
 
-      if (scanIsComplete || nonFollowers.length > 0) {
-        saveCachedScanResults(nonFollowers);
-        setCachedScan({ results: nonFollowers, timestamp: Date.now() });
+      if (scanIsComplete || nonFollowersCount > 0) {
+        saveCachedScanResults(followedAccounts);
+        setCachedScan({ results: followedAccounts, timestamp: Date.now() });
       }
 
       setState(prevState => {
@@ -781,7 +791,7 @@ function App() {
           percentage: 100,
           scanIncomplete: !scanIsComplete,
           isScanningActive: false,
-          results: nonFollowers,
+          results: followedAccounts,
           totalScanned: checkedCount,
         };
       });

@@ -122,6 +122,8 @@ export const translations = {
 
     // Follow counts (following > followers)
     followingMoreThanFollowers: "Following > Followers",
+    mutuals: "Mutuals",
+    followsYou: "Follows you",
     followCountsLine: "%s followers · %s following",
     checkFollowCounts: "Check follow counts (%s)",
     checkFollowCountsHint: "Looks up each non-whitelisted account to find ones following more people than follow them (often bots).",
@@ -251,6 +253,8 @@ export const translations = {
 
     // Follow counts (following > followers)
     followingMoreThanFollowers: "Siguiendo > Seguidores",
+    mutuals: "Mutuos",
+    followsYou: "Te sigue",
     followCountsLine: "%s seguidores · %s seguidos",
     checkFollowCounts: "Comprobar seguidores (%s)",
     checkFollowCountsHint: "Consulta cada cuenta fuera de la lista blanca para encontrar las que siguen a más personas de las que las siguen (a menudo bots).",

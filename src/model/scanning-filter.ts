@@ -3,4 +3,5 @@ export interface ScanningFilter {
   readonly showPrivate: boolean;
   readonly showWithOutProfilePicture: boolean;
   readonly onlyFollowingMoreThanFollowers: boolean;
+  readonly showMutuals: boolean;
 }
