@@ -1,5 +1,5 @@
 import React from "react";
-import { assertUnreachable, getCurrentPageUnfollowers, getMaxPage, getUsersForDisplay, isWithoutProfilePicture } from "../utils/utils";
+import { assertUnreachable, followsMoreThanFollowedBy, formatCount, getCurrentPageUnfollowers, getMaxPage, getUsersForDisplay, hasFollowCounts, isWithoutProfilePicture } from "../utils/utils";
 import { State } from "../model/state";
 import { UserNode } from "../model/user";
 import { WHITELISTED_RESULTS_STORAGE_KEY } from "../constants/constants";
@@ -16,6 +16,7 @@ export interface SearchingProps {
   UserCheckIcon: React.FC;
   UserUncheckIcon: React.FC;
   lang: Language;
+  onCheckFollowCounts: () => void;
 }
 
 export const Searching = ({
@@ -28,10 +29,16 @@ export const Searching = ({
   UserCheckIcon,
   UserUncheckIcon,
   lang,
+  onCheckFollowCounts,
 }: SearchingProps) => {
   if (state.status !== "scanning") {
     return null;
   }
+  const isBusy = Boolean(state.isScanningActive || state.isCheckingFollowCounts);
+  const whitelistedIds = new Set(state.whitelistedResults.map(user => user.id));
+  const usersMissingCounts = state.results.filter(
+    user => (state.filter.showMutuals || !user.follows_viewer) && !whitelistedIds.has(user.id) && !hasFollowCounts(user),
+  ).length;
 
   const usersForDisplay = getUsersForDisplay(
     state.results,
@@ -120,12 +127,30 @@ export const Searching = ({
               />
               &nbsp;{t(lang, "noPic")}
             </label>
+            <label className="badge m-small">
+              <input
+                type="checkbox"
+                name="onlyFollowingMoreThanFollowers"
+                checked={state.filter.onlyFollowingMoreThanFollowers}
+                onChange={handleScanFilter}
+              />
+              &nbsp;{t(lang, "followingMoreThanFollowers")}
+            </label>
+            <label className="badge m-small">
+              <input
+                type="checkbox"
+                name="showMutuals"
+                checked={state.filter.showMutuals}
+                onChange={handleScanFilter}
+              />
+              &nbsp;{t(lang, "mutuals")}
+            </label>
           </menu>
 
           <div className="sidebar-buttons-grid">
             <button
               className="button-secondary"
-              disabled={Boolean(state.isScanningActive)}
+              disabled={isBusy}
               onClick={() => {
                 const verifiedUsers = usersForDisplay.filter(u => u.is_verified);
                 const currentIds = new Set(state.selectedResults.map(u => u.id));
@@ -137,7 +162,7 @@ export const Searching = ({
             </button>
             <button
               className="button-secondary"
-              disabled={Boolean(state.isScanningActive)}
+              disabled={isBusy}
               onClick={() => {
                 const privateUsers = usersForDisplay.filter(u => u.is_private);
                 const currentIds = new Set(state.selectedResults.map(u => u.id));
@@ -149,7 +174,7 @@ export const Searching = ({
             </button>
             <button
               className="button-secondary"
-              disabled={Boolean(state.isScanningActive)}
+              disabled={isBusy}
               onClick={() => {
                 const noPicUsers = usersForDisplay.filter(u => isWithoutProfilePicture(u));
                 const currentIds = new Set(state.selectedResults.map(u => u.id));
@@ -161,12 +186,26 @@ export const Searching = ({
             </button>
             <button
               className="button-secondary danger-text"
-              disabled={Boolean(state.isScanningActive)}
+              disabled={isBusy}
               onClick={() => setState({ ...state, selectedResults: [] })}
             >
               {t(lang, "clear")}
             </button>
           </div>
+          {!state.isScanningActive && state.results.length > 0 && (
+            <button
+              className="button-secondary sidebar-whitelist-action"
+              disabled={Boolean(state.isCheckingFollowCounts) || usersMissingCounts === 0}
+              title={t(lang, "checkFollowCountsHint")}
+              onClick={onCheckFollowCounts}
+            >
+              {state.isCheckingFollowCounts
+                ? t(lang, "checkingFollowCounts")
+                : usersMissingCounts > 0
+                ? t(lang, "checkFollowCounts", usersMissingCounts)
+                : t(lang, "followCountsChecked")}
+            </button>
+          )}
           {state.selectedResults.length > 0 && (
             <button
               className="button-secondary sidebar-whitelist-action"
@@ -198,6 +237,10 @@ export const Searching = ({
                 <div className="summary-item">
                   <span>{t(lang, "private")}</span>
                   <strong>{state.results.filter(u => u.is_private).length}</strong>
+                </div>
+                <div className="summary-item">
+                  <span>{t(lang, "followingMoreThanFollowers")}</span>
+                  <strong>{state.results.filter(followsMoreThanFollowedBy).length}</strong>
                 </div>
               </div>
             </div>
@@ -244,9 +287,9 @@ export const Searching = ({
         </div>
         <button
           className="unfollow"
-          disabled={state.scanIncomplete || Boolean(state.isScanningActive) || state.selectedResults.length === 0}
+          disabled={state.scanIncomplete || isBusy || state.selectedResults.length === 0}
           title={
-            state.isScanningActive
+            isBusy
               ? t(lang, "scanInProgressWait")
               : state.scanIncomplete
               ? t(lang, "unfollowDisabledPartialScan")
@@ -329,10 +372,11 @@ export const Searching = ({
         </nav>
         {getCurrentPageUnfollowers(usersForDisplay, state.page).map(user => {
           const firstLetter = user.username.substring(0, 1).toUpperCase();
+          const isRatioFlagged = followsMoreThanFollowedBy(user);
           return (
             <React.Fragment key={user.id}>
               {firstLetter !== currentLetter && onNewLetter(firstLetter)}
-              <label className="result-item">
+              <label className={`result-item ${isRatioFlagged ? "ratio-flagged" : ""}`}>
                 <div className="flex grow align-center">
                   <div
                     className="avatar-container"
@@ -385,11 +429,18 @@ export const Searching = ({
                       {user.username}
                     </a>
                     <span className="fs-medium">{user.full_name}</span>
+                    {hasFollowCounts(user) && (
+                      <span className="follow-counts">
+                        {t(lang, "followCountsLine", formatCount(user.follower_count!, lang), formatCount(user.following_count!, lang))}
+                      </span>
+                    )}
                   </div>
                   {user.is_verified && <div className="verified-badge">✔</div>}
-                  {user.is_private && (
-                    <div className="flex justify-center w-100">
-                      <span className="private-indicator">{t(lang, "private")}</span>
+                  {(user.is_private || isRatioFlagged || user.follows_viewer) && (
+                    <div className="flex justify-center w-100 gap-small">
+                      {isRatioFlagged && <span className="ratio-indicator">{t(lang, "followingMoreThanFollowers")}</span>}
+                      {user.follows_viewer && <span className="mutual-indicator">{t(lang, "followsYou")}</span>}
+                      {user.is_private && <span className="private-indicator">{t(lang, "private")}</span>}
                     </div>
                   )}
                 </div>
@@ -397,7 +448,7 @@ export const Searching = ({
                   <input
                     className="account-checkbox"
                     type="checkbox"
-                    disabled={Boolean(state.isScanningActive)}
+                    disabled={isBusy}
                     checked={state.selectedResults.some(result => result.id === user.id)}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => toggleUser(e.currentTarget.checked, user)}
                   />

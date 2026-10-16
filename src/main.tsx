@@ -22,12 +22,16 @@ import {
   addFollowerToIndex,
   assertUnreachable,
   createFollowerIndex,
+  fetchFollowCounts,
   fetchFriendshipsPage,
+  FollowCounts,
+  followsMoreThanFollowedBy,
   FriendshipsListKind,
   FriendshipsPage,
   getCookie,
   getCurrentPageUnfollowers,
   getUsersForDisplay,
+  hasFollowCounts,
   InstagramApiError,
   isUserInFollowerIndex,
   RawFriendshipUser,
@@ -54,7 +58,13 @@ const _createPreviewUser = (
   id: string,
   username: string,
   fullName: string,
-  options: { readonly isPrivate?: boolean; readonly isVerified?: boolean; readonly followsViewer?: boolean } = {},
+  options: {
+    readonly isPrivate?: boolean;
+    readonly isVerified?: boolean;
+    readonly followsViewer?: boolean;
+    readonly followerCount?: number;
+    readonly followingCount?: number;
+  } = {},
 ): UserNode => ({
   id,
   username,
@@ -65,6 +75,8 @@ const _createPreviewUser = (
   followed_by_viewer: true,
   follows_viewer: options.followsViewer ?? false,
   requested_by_viewer: false,
+  follower_count: options.followerCount,
+  following_count: options.followingCount,
   reel: {
     id,
     expiring_at: 0,
@@ -81,15 +93,15 @@ const _createPreviewUser = (
 });
 
 const _getPreviewUsers = (): readonly UserNode[] => [
-  _createPreviewUser("1", "alina.frames", "Alina Moreno", { isVerified: true }),
-  _createPreviewUser("2", "brassandbone", "Theo Walsh", { isPrivate: true }),
+  _createPreviewUser("1", "alina.frames", "Alina Moreno", { isVerified: true, followerCount: 284000, followingCount: 412 }),
+  _createPreviewUser("2", "brassandbone", "Theo Walsh", { isPrivate: true, followerCount: 38, followingCount: 6950 }),
   _createPreviewUser("3", "citrus.archive", "Mara Kim", { followsViewer: true }),
-  _createPreviewUser("4", "dawnledger", "Jon Bell", { isPrivate: true }),
-  _createPreviewUser("5", "elias.market", "Elias Noor", { isVerified: true }),
-  _createPreviewUser("6", "fieldnotes.studio", "Nadia Reyes"),
-  _createPreviewUser("7", "glint.supply", "Remy Park", { followsViewer: true }),
+  _createPreviewUser("4", "dawnledger", "Jon Bell", { isPrivate: true, followerCount: 1210, followingCount: 980 }),
+  _createPreviewUser("5", "elias.market", "Elias Noor", { isVerified: true, followerCount: 51200, followingCount: 230 }),
+  _createPreviewUser("6", "fieldnotes.studio", "Nadia Reyes", { followerCount: 112, followingCount: 4380 }),
+  _createPreviewUser("7", "glint.supply", "Remy Park", { followsViewer: true, followerCount: 87, followingCount: 7420 }),
   _createPreviewUser("8", "harbor.sequence", "Ivy Chen", { isPrivate: true }),
-  _createPreviewUser("9", "inkline.daily", "Sofia Grant"),
+  _createPreviewUser("9", "inkline.daily", "Sofia Grant", { followerCount: 640, followingCount: 702 }),
   _createPreviewUser("10", "juniper.signal", "Cal Reed", { isVerified: true }),
   _createPreviewUser("11", "keystone.labs", "Mina Torres"),
   _createPreviewUser("12", "lowlight.club", "Owen Voss", { isPrivate: true }),
@@ -114,6 +126,8 @@ function App() {
             showVerified: true,
             showPrivate: true,
             showWithOutProfilePicture: true,
+            onlyFollowingMoreThanFollowers: false,
+            showMutuals: false,
           },
         } as State
         : { status: "initial" as const }
@@ -169,7 +183,7 @@ function App() {
       isActiveProcess = false;
       break;
     case "scanning":
-      isActiveProcess = Boolean(state.isScanningActive);
+      isActiveProcess = Boolean(state.isScanningActive || state.isCheckingFollowCounts);
       break;
     case "unfollowing":
       isActiveProcess = state.percentage < 100;
@@ -197,6 +211,8 @@ function App() {
         showVerified: true,
         showPrivate: true,
         showWithOutProfilePicture: true,
+        onlyFollowingMoreThanFollowers: false,
+        showMutuals: false,
       },
     });
     setToast({
@@ -225,6 +241,8 @@ function App() {
           showVerified: true,
           showPrivate: true,
           showWithOutProfilePicture: true,
+          onlyFollowingMoreThanFollowers: false,
+          showMutuals: false,
         },
       });
       return;
@@ -244,7 +262,111 @@ function App() {
         showVerified: true,
         showPrivate: true,
         showWithOutProfilePicture: true,
+        onlyFollowingMoreThanFollowers: false,
+        showMutuals: false,
       },
+    });
+  };
+
+  // The friendships lists don't include follower/following counts, so each
+  // non-follower is looked up one profile at a time, paced like the scan.
+  const onCheckFollowCounts = async () => {
+    if (state.status !== "scanning" || state.isScanningActive || state.isCheckingFollowCounts || isLocalPreview) {
+      return;
+    }
+    const whitelistedIds = new Set(state.whitelistedResults.map(user => user.id));
+    const usersToCheck = state.results.filter(
+      user => (state.filter.showMutuals || !user.follows_viewer) && !whitelistedIds.has(user.id) && !hasFollowCounts(user),
+    );
+    if (usersToCheck.length === 0) {
+      return;
+    }
+    const estimatedMsPerLookup =
+      timings.timeBetweenSearchCycles * 1.15 + 650 + timings.timeToWaitAfterFiveSearchCycles / CHECKS_BEFORE_LONG_SLEEP;
+    const estimatedMinutes = Math.max(1, Math.round((usersToCheck.length * estimatedMsPerLookup) / 60000));
+    if (!confirm(t(lang, "checkFollowCountsConfirm", usersToCheck.length, estimatedMinutes))) {
+      return;
+    }
+
+    setState(prevState => (prevState.status === "scanning" ? { ...prevState, isCheckingFollowCounts: true } : prevState));
+
+    // Returns null for accounts that can't be looked up (deleted, renamed), and
+    // "blocked" once rate-limit retries are exhausted so the check can stop.
+    const fetchCountsWithRetry = async (username: string): Promise<FollowCounts | null | "blocked"> => {
+      for (let retries = 0; ; retries++) {
+        try {
+          return await fetchFollowCounts(username);
+        } catch (e: any) {
+          const message = String(e?.message ?? "");
+          const isRateLimit =
+            e instanceof InstagramApiError &&
+            (e.status === 429 || /feedback_required|checkpoint|rate limit|please wait/i.test(message));
+          const isTransient = isRateLimit || e instanceof TypeError;
+          if (!isTransient) {
+            console.warn(`Skipping follow counts for ${username}:`, e);
+            return null;
+          }
+          if (retries >= 3) {
+            console.error(`Follow count check stopped at ${username}:`, e);
+            return "blocked";
+          }
+          const waitSeconds = isRateLimit ? RATE_LIMIT_COOLDOWN_SECONDS * (retries + 1) : 5 * (retries + 1);
+          for (let sec = waitSeconds; sec > 0; sec--) {
+            setToast({ show: true, text: t(lang, "rateLimitPause", sec) });
+            await sleep(1000);
+          }
+        }
+      }
+    };
+
+    const countsById = new Map<string, FollowCounts>();
+    let stoppedEarly = false;
+    for (let i = 0; i < usersToCheck.length; i++) {
+      while (scanningPausedRef.current) {
+        await sleep(1000);
+      }
+      const user = usersToCheck[i];
+      const counts = await fetchCountsWithRetry(user.username);
+      if (counts === "blocked") {
+        stoppedEarly = true;
+        break;
+      }
+      if (counts !== null) {
+        countsById.set(user.id, counts);
+        setState(prevState =>
+          prevState.status === "scanning"
+            ? { ...prevState, results: prevState.results.map(result => (result.id === user.id ? { ...result, ...counts } : result)) }
+            : prevState,
+        );
+      }
+      setToast({ show: true, text: t(lang, "checkingFollowCountsProgress", i + 1, usersToCheck.length) });
+      if (i === usersToCheck.length - 1) {
+        break;
+      }
+
+      await sleep(Math.floor(Math.random() * 700) + 300);
+      await sleep(Math.floor(Math.random() * timings.timeBetweenSearchCycles * 0.3) + timings.timeBetweenSearchCycles);
+      if ((i + 1) % CHECKS_BEFORE_LONG_SLEEP === 0) {
+        const longSleep = Math.max(0, timings.timeToWaitAfterFiveSearchCycles + (Math.random() * 10000 - 5000));
+        setToast({ show: true, text: t(lang, "sleepingSafety", Math.round(longSleep / 1000)) });
+        await sleep(longSleep);
+      }
+    }
+
+    // Persist whatever was fetched so a reload or a re-run doesn't look these accounts up again.
+    const updatedResults = state.results.map(user => {
+      const counts = countsById.get(user.id);
+      return counts ? { ...user, ...counts } : user;
+    });
+    saveCachedScanResults(updatedResults);
+    setCachedScan({ results: updatedResults, timestamp: Date.now() });
+
+    setState(prevState => (prevState.status === "scanning" ? { ...prevState, isCheckingFollowCounts: false } : prevState));
+    setToast({
+      show: true,
+      text: stoppedEarly
+        ? t(lang, "followCountsInterrupted", countsById.size)
+        : t(lang, "followCountsCompleted", updatedResults.filter(followsMoreThanFollowedBy).length),
     });
   };
 
@@ -594,19 +716,23 @@ function App() {
       );
 
       // Phase 2: Walk the viewer's following list and check each against the follower index.
-      // Accounts not in the index genuinely do not follow back and are progressively streamed to UI.
-      const nonFollowers: UserNode[] = [];
+      // Accounts not in the index genuinely do not follow back. Mutuals are kept too (flagged via
+      // follows_viewer) so the follow-count check can spot bots that follow back; the default
+      // filter still hides them. Accounts are progressively streamed to UI.
+      const followedAccounts: UserNode[] = [];
+      let nonFollowersCount = 0;
       let checkedCount = 0;
 
       const checkFollowingPage = async (pageUsers: readonly RawFriendshipUser[]): Promise<boolean> => {
-        const newNonFollowersBatch: UserNode[] = [];
+        const newAccountsBatch: UserNode[] = [];
 
         for (const user of pageUsers) {
           const followsViewer = isUserInFollowerIndex(followerIndex, user);
+          const node = rawFriendshipUserToUserNode(user, followsViewer);
+          followedAccounts.push(node);
+          newAccountsBatch.push(node);
           if (!followsViewer) {
-            const node = rawFriendshipUserToUserNode(user, false);
-            nonFollowers.push(node);
-            newNonFollowersBatch.push(node);
+            nonFollowersCount++;
           }
           checkedCount++;
         }
@@ -617,7 +743,7 @@ function App() {
           prevState.status === "scanning"
             ? {
                 ...prevState,
-                results: newNonFollowersBatch.length > 0 ? [...prevState.results, ...newNonFollowersBatch] : prevState.results,
+                results: newAccountsBatch.length > 0 ? [...prevState.results, ...newAccountsBatch] : prevState.results,
                 totalScanned: checkedCount,
                 percentage: followingProgress,
               }
@@ -651,9 +777,9 @@ function App() {
 
       const scanIsComplete = followingCompleted;
 
-      if (scanIsComplete || nonFollowers.length > 0) {
-        saveCachedScanResults(nonFollowers);
-        setCachedScan({ results: nonFollowers, timestamp: Date.now() });
+      if (scanIsComplete || nonFollowersCount > 0) {
+        saveCachedScanResults(followedAccounts);
+        setCachedScan({ results: followedAccounts, timestamp: Date.now() });
       }
 
       setState(prevState => {
@@ -665,7 +791,7 @@ function App() {
           percentage: 100,
           scanIncomplete: !scanIsComplete,
           isScanningActive: false,
-          results: nonFollowers,
+          results: followedAccounts,
           totalScanned: checkedCount,
         };
       });
@@ -787,6 +913,7 @@ function App() {
         UserCheckIcon={UserCheckIcon}
         UserUncheckIcon={UserUncheckIcon}
         lang={lang}
+        onCheckFollowCounts={onCheckFollowCounts}
       ></Searching>;
       break;
     }

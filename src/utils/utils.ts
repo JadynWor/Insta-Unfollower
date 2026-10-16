@@ -28,14 +28,16 @@ export function exportToJSON(users: readonly UserNode[]) {
 }
 
 export function exportToCSV(users: readonly UserNode[]) {
-  const headers = ['id', 'username', 'full_name', 'is_verified', 'is_private', 'profile_pic_url'];
+  const headers = ['id', 'username', 'full_name', 'is_verified', 'is_private', 'profile_pic_url', 'follower_count', 'following_count'];
   const rows = users.map(user => [
     user.id,
     user.username,
     `"${user.full_name.replace(/"/g, '""')}"`,
     user.is_verified,
     user.is_private,
-    user.profile_pic_url
+    user.profile_pic_url,
+    user.follower_count ?? '',
+    user.following_count ?? '',
   ]);
   
   const csvContent = "data:text/csv;charset=utf-8," 
@@ -69,6 +71,20 @@ export function isWithoutProfilePicture(user: UserNode): boolean {
   return WITHOUT_PROFILE_PICTURE_URL_IDS.some(id => user.profile_pic_url.includes(id));
 }
 
+export function hasFollowCounts(user: UserNode): boolean {
+  return user.follower_count !== undefined && user.following_count !== undefined;
+}
+
+// Following far more accounts than follow you back is a common sign of
+// bot / follow-for-follow accounts.
+export function followsMoreThanFollowedBy(user: UserNode): boolean {
+  return hasFollowCounts(user) && user.following_count! > user.follower_count!;
+}
+
+export function formatCount(count: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(count);
+}
+
 export function getUsersForDisplay(
   results: readonly UserNode[],
   whitelistedResults: readonly UserNode[],
@@ -99,12 +115,15 @@ export function getUsersForDisplay(
     if (!filter.showVerified && result.is_verified) {
       continue;
     }
-    // Scans only keep accounts that don't follow back; this also hides
-    // mutuals stored by older cached scans.
-    if (result.follows_viewer) {
+    // Scans keep mutuals so their follow counts can be checked, but they're
+    // hidden unless asked for so "Select All" only picks non-followers.
+    if (result.follows_viewer && !filter.showMutuals) {
       continue;
     }
     if (!filter.showWithOutProfilePicture && isWithoutProfilePicture(result)) {
+      continue;
+    }
+    if (filter.onlyFollowingMoreThanFollowers && !followsMoreThanFollowedBy(result)) {
       continue;
     }
     const userMatchesSearchTerm =
@@ -401,7 +420,7 @@ export class InstagramApiError extends Error {
   }
 }
 
-export async function fetchFriendshipsPage(kind: FriendshipsListKind, maxId?: string, count?: number, userId?: string): Promise<FriendshipsPage> {
+function instagramApiHeaders(): Record<string, string> {
   const csrftoken = getCookie('csrftoken') || '';
   const headers: Record<string, string> = {
     'X-IG-App-ID': INSTAGRAM_WEB_APP_ID,
@@ -412,23 +431,14 @@ export async function fetchFriendshipsPage(kind: FriendshipsListKind, maxId?: st
   if (csrftoken) {
     headers['X-CSRFToken'] = csrftoken;
   }
-
-  return fetchFriendshipsPageFromUrl(friendshipsUrlGenerator(kind, maxId, count, userId), headers);
+  return headers;
 }
 
-async function fetchFriendshipsPageFromUrl(url: string, headers?: Record<string, string>): Promise<FriendshipsPage> {
-  if (headers === undefined) {
-    const csrftoken = getCookie('csrftoken') || '';
-    headers = {
-      'X-IG-App-ID': INSTAGRAM_WEB_APP_ID,
-      'X-ASBD-ID': INSTAGRAM_ASBD_ID,
-      'X-Requested-With': 'XMLHttpRequest',
-      'Accept': '*/*',
-    };
-    if (csrftoken) {
-      headers['X-CSRFToken'] = csrftoken;
-    }
-  }
+export async function fetchFriendshipsPage(kind: FriendshipsListKind, maxId?: string, count?: number, userId?: string): Promise<FriendshipsPage> {
+  return fetchFriendshipsPageFromUrl(friendshipsUrlGenerator(kind, maxId, count, userId), instagramApiHeaders());
+}
+
+async function fetchFriendshipsPageFromUrl(url: string, headers: Record<string, string> = instagramApiHeaders()): Promise<FriendshipsPage> {
   const response = await fetch(url, {
     credentials: 'same-origin',
     headers,
@@ -441,6 +451,31 @@ async function fetchFriendshipsPageFromUrl(url: string, headers?: Record<string,
     throw new InstagramApiError(response.status, data?.message || `Instagram returned failure status for ${url}`);
   }
   return data as FriendshipsPage;
+}
+
+export interface FollowCounts {
+  readonly follower_count: number;
+  readonly following_count: number;
+}
+
+// One request per account (the same endpoint instagram.com's profile page
+// uses), so callers must pace these like any other scan request.
+export async function fetchFollowCounts(username: string): Promise<FollowCounts> {
+  const response = await fetch(
+    `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+    { credentials: 'same-origin', headers: instagramApiHeaders() },
+  );
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.status === 'fail') {
+    throw new InstagramApiError(response.status, data?.message || `Instagram returned HTTP ${response.status} while fetching ${username}'s profile`);
+  }
+  const followerCount = data?.data?.user?.edge_followed_by?.count;
+  const followingCount = data?.data?.user?.edge_follow?.count;
+  if (typeof followerCount !== 'number' || typeof followingCount !== 'number') {
+    // Deleted / deactivated accounts come back without a user object.
+    throw new InstagramApiError(404, `Instagram returned no follow counts for ${username}`);
+  }
+  return { follower_count: followerCount, following_count: followingCount };
 }
 
 export function rawFriendshipUserToUserNode(raw: RawFriendshipUser, followsViewer: boolean): UserNode {

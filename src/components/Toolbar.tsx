@@ -181,7 +181,7 @@ export const Toolbar = ({
                 title={t(lang, "selectPage")}
                 type="checkbox"
                 // Avoid allowing selection only while the scan is actively fetching
-                disabled={Boolean(state.isScanningActive)}
+                disabled={Boolean(state.isScanningActive || state.isCheckingFollowCounts)}
                 checked={
                   (() => {
                     const displayed = getUsersForDisplay(state.results, state.whitelistedResults, state.currentTab, state.searchTerm, state.filter);
@@ -201,7 +201,7 @@ export const Toolbar = ({
                 title={t(lang, "selectAll")}
                 type="checkbox"
                 // Avoid allowing selection only while the scan is actively fetching
-                disabled={Boolean(state.isScanningActive)}
+                disabled={Boolean(state.isScanningActive || state.isCheckingFollowCounts)}
                 checked={
                   (() => {
                     const displayed = getUsersForDisplay(
