@@ -119,6 +119,18 @@ export const translations = {
     sleepingSafety: "Sleeping %s seconds to prevent getting temp blocked",
     loadedFromCache: "Loaded %s accounts from cache!",
     actionBlockedWarning: "⚠️ Instagram Action Block detected (feedback_required). Unfollow queue stopped to protect your account.",
+
+    // Follow counts (following > followers)
+    followingMoreThanFollowers: "Following > Followers",
+    followCountsLine: "%s followers · %s following",
+    checkFollowCounts: "Check follow counts (%s)",
+    checkFollowCountsHint: "Looks up each non-whitelisted account to find ones following more people than follow them (often bots).",
+    checkingFollowCounts: "Checking follow counts...",
+    followCountsChecked: "Follow counts checked ✓",
+    checkFollowCountsConfirm: "This looks up %s profiles one at a time to get their follower and following counts. It makes one Instagram request per account and takes about %s min. Continue?",
+    checkingFollowCountsProgress: "Checking follow counts (%s/%s)...",
+    followCountsCompleted: "Follow counts checked! %s accounts follow more people than follow them.",
+    followCountsInterrupted: "Instagram is rate limiting, so the check stopped after %s accounts. Run it again later to continue where it left off.",
   },
   es: {
     // Launch Screen
@@ -236,6 +248,18 @@ export const translations = {
     sleepingSafety: "Esperando %s segundos para prevenir bloqueos temporales",
     loadedFromCache: "¡Se cargaron %s cuentas del historial!",
     actionBlockedWarning: "⚠️ Bloqueo de acción de Instagram detectado (feedback_required). La cola se detuvo para proteger tu cuenta.",
+
+    // Follow counts (following > followers)
+    followingMoreThanFollowers: "Siguiendo > Seguidores",
+    followCountsLine: "%s seguidores · %s seguidos",
+    checkFollowCounts: "Comprobar seguidores (%s)",
+    checkFollowCountsHint: "Consulta cada cuenta fuera de la lista blanca para encontrar las que siguen a más personas de las que las siguen (a menudo bots).",
+    checkingFollowCounts: "Comprobando seguidores...",
+    followCountsChecked: "Seguidores comprobados ✓",
+    checkFollowCountsConfirm: "Se consultarán %s perfiles uno por uno para obtener sus seguidores y seguidos. Hace una solicitud a Instagram por cuenta y tarda unos %s min. ¿Continuar?",
+    checkingFollowCountsProgress: "Comprobando seguidores (%s/%s)...",
+    followCountsCompleted: "¡Comprobación completada! %s cuentas siguen a más personas de las que las siguen.",
+    followCountsInterrupted: "Instagram está limitando las solicitudes; la comprobación se detuvo tras %s cuentas. Vuelve a ejecutarla más tarde para continuar.",
   },
 } as const;
 

@@ -8,6 +8,10 @@ export interface UserNode {
     readonly followed_by_viewer: boolean;
     readonly follows_viewer: boolean;
     readonly requested_by_viewer: boolean;
+    // Optional: the friendships list endpoints don't return these, so they're
+    // only set once the "check follow counts" pass has looked the account up.
+    readonly follower_count?: number;
+    readonly following_count?: number;
     // Optional: populated only for the local preview/demo data. The private
     // REST endpoints used for real scans (see utils/utils.ts) don't return
     // story-reel data, and nothing in the app reads this field, so it's kept
